@@ -1,5 +1,3 @@
-// validation.rs
-
 use std::error::Error;
 
 pub fn validate_product_name(name: &str) -> bool {
