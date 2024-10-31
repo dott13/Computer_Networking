@@ -6,6 +6,7 @@ pub struct Product {
     pub name: String,
     pub price: f64,
     pub link: String,
+    pub description: String,
 }
 
 impl Product {
@@ -29,12 +30,14 @@ impl Product {
             r#"{{
     "name": "{}",
     "price": {},
-    "link": "{}"
+    "link": "{}",
+    "attribut": "{}"
 }}"#,
             // Escape special characters in JSON strings
             self.name.replace('"', "\\\""),
             self.price,
-            self.link.replace('"', "\\\"")
+            self.link.replace('"', "\\\""),
+            self.description,
         )
     }
 
@@ -45,11 +48,13 @@ impl Product {
     <name>{}</name>
     <price>{}</price>
     <link>{}</link>
+    <attribute{}</attribute>
 </product>"#,
             // Escape special characters in XML
             escape_xml(&self.name),
             self.price,
-            escape_xml(&self.link)
+            escape_xml(&self.link),
+            escape_xml(&self.description)
         )
     }
 }
@@ -109,6 +114,7 @@ pub fn serialize_products_to_bi(products: &[Product]) -> String {
         product_map.insert("name".to_string(), Data::Text(product.name.clone()));
         product_map.insert("price".to_string(), Data::Float(product.price));
         product_map.insert("link".to_string(), Data::Text(product.link.clone()));
+        product_map.insert("attributes".to_string(), Data::Text(product.description.clone()));
 
         let product_data = Data::Map(product_map);
         product_data.to_bi(4)

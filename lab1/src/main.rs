@@ -7,7 +7,7 @@ use std::error::Error;
 use chrono::{DateTime, Utc};
 use product::{Product, serialize_products_to_json, serialize_products_to_xml, serialize_products_to_bi};
 use scraping::scrape_products;
-use data::{MDL_TO_EUR};
+use data::MDL_TO_EUR;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Scrape products from the website
@@ -45,11 +45,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Display details of each filtered product
     println!("\nDetailed Product List:");
     for product in filtered_products {
-        println!("Product: {}, Price: {:.2} MDL (~ {:.2} EUR), Link: {}",
+        println!("Product: {}, Price: {:.2} MDL (~ {:.2} EUR), Link: {}, Details: {}",
                  product.name,
                  product.price,
                  product.price * MDL_TO_EUR,
-                 product.link);
+                 product.link,
+                 product.description);
     }
     
     Ok(())

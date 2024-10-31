@@ -6,7 +6,7 @@ use url::Url;
 use select::document::Document;
 use select::predicate::{Name, Class};
 use native_tls::TlsConnector;
-use crate::product::{Product};
+use crate::product::Product;
 use crate::validation::{validate_product_name, validate_price, convert_price_to_numeric};
 
 // Trait to abstract over different types of streams
@@ -72,6 +72,26 @@ pub fn scrape_products(initial_url: &str) -> Result<Vec<Product>, Box<dyn Error>
 
     Err("Too many redirects".into())
 }
+
+fn scrape_product_details(product_link: &str) -> Result<String, Box<dyn Error>> {
+    let (status, _, body) = fetch_url(product_link)?;
+    
+    if status != 200 {
+        return Err("Failed to fetch product details".into());
+    }
+
+    let document = Document::from(body.as_str());
+    
+    // Extract the product attributes
+    let attributes = document.find(Class("xp-attr"))
+        .next()
+        .map(|n| n.text())
+        .unwrap_or_else(|| "Attributes not found".to_string());
+
+    Ok(attributes)
+}
+
+
 
 fn fetch_url(url: &str) -> Result<(u32, Vec<String>, String), Box<dyn Error>> {
     let parsed_url = Url::parse(url)?;
@@ -150,15 +170,21 @@ fn parse_products(body: &str) -> Result<Vec<Product>, Box<dyn Error>> {
             .and_then(|n| n.attr("href"))
             .unwrap_or("Link not found");
 
-        if validate_product_name(&product_name) && validate_price(&price) {
-            if let Ok(numeric_price) = convert_price_to_numeric(&price) {
-                products.push(Product {
-                    name: product_name,
-                    price: numeric_price,
-                    link: product_link.to_string(),
-                });
+            if validate_product_name(&product_name) && validate_price(&price) {
+                if let Ok(numeric_price) = convert_price_to_numeric(&price) {
+                    // Fetch description from the product link
+                    let attributes = scrape_product_details(product_link)
+                        .unwrap_or_else(|_| "Attributes not found".to_string());
+            
+                    products.push(Product {
+                        name: product_name,
+                        price: numeric_price,
+                        link: product_link.to_string(),
+                        description: attributes, // This is now of type Option<String>
+                    });
+                }
             }
-        }
+            
     }
 
     Ok(products)
