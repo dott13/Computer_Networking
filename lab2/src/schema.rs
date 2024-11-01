@@ -29,6 +29,7 @@ diesel::table! {
         id -> Nullable<Integer>,
         first_name -> Text,
         last_name -> Text,
+        username -> Text,
         role_id -> Nullable<Integer>,
         apartment -> Nullable<Text>,
         block_id -> Nullable<Integer>,
