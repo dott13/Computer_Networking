@@ -2,14 +2,14 @@
 
 diesel::table! {
     blocks (id) {
-        id -> Nullable<Integer>,
+        id -> Integer,
         name -> Text,
     }
 }
 
 diesel::table! {
     messages (id) {
-        id -> Nullable<Integer>,
+        id -> Integer,
         user_id -> Integer,
         block_id -> Integer,
         content -> Text,
@@ -19,14 +19,14 @@ diesel::table! {
 
 diesel::table! {
     roles (id) {
-        id -> Nullable<Integer>,
+        id -> Integer,
         name -> Text,
     }
 }
 
 diesel::table! {
     users (id) {
-        id -> Nullable<Integer>,
+        id -> Integer,
         first_name -> Text,
         last_name -> Text,
         username -> Text,

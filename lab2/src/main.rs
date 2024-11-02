@@ -6,6 +6,7 @@ mod controllers;
 mod db;
 mod models;
 mod schema;
+mod utils;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

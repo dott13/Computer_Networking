@@ -24,7 +24,7 @@ pub struct User {
     pub first_name: String,
     pub last_name: String,
     pub username: String,
-    pub role_id: Option<i32>,  // Use Option for nullable foreign key
+    pub role_id: Option<i32>,  
     pub apartment: Option<String>,  // Use Option for nullable field
     pub block_id: Option<i32>,  // Use Option for nullable foreign key
     pub photo: Option<Vec<u8>>,  // Use Option for nullable BLOB
