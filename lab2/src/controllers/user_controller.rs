@@ -239,3 +239,109 @@ pub async fn get_users(
         }
     }
 }
+
+#[derive(Insertable, Deserialize, Debug, AsChangeset)]
+#[diesel(table_name = users)]
+pub struct UpdateUser {
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub username: Option<String>,
+    pub role_id: Option<i32>,
+    pub apartment: Option<String>,
+    pub block_id: Option<i32>,
+    pub password: Option<String>,
+    pub photo: Option<Vec<u8>>,
+}
+
+pub async fn update_user(
+    user_id: web::Path<i32>,
+    mut payload: Multipart,
+    db: web::Data<DbConnection>,
+) -> impl Responder {
+    let mut updated_user = UpdateUser {
+        first_name: None,
+        last_name: None,
+        username: None,
+        role_id: None,
+        apartment: None,
+        block_id: None,
+        password: None,
+        photo: None,
+    };
+
+    // Parse the multipart form data
+    while let Some(field_result) = payload.next().await {
+        match field_result {
+            Ok(mut field) => {
+                let field_name = field.name();
+                match field_name {
+                    Some("first_name") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        updated_user.first_name = Some(String::from_utf8(bytes.to_vec()).unwrap());
+                    }
+                    Some("last_name") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        updated_user.last_name = Some(String::from_utf8(bytes.to_vec()).unwrap());
+                    }
+                    Some("username") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        updated_user.username = Some(String::from_utf8(bytes.to_vec()).unwrap());
+                    }
+                    Some("role_id") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        updated_user.role_id = Some(String::from_utf8(bytes.to_vec()).unwrap().parse().unwrap());
+                    }
+                    Some("apartment") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        updated_user.apartment = Some(String::from_utf8(bytes.to_vec()).unwrap());
+                    }
+                    Some("block_id") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        updated_user.block_id = Some(String::from_utf8(bytes.to_vec()).unwrap().parse().unwrap());
+                    }
+                    Some("password") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        updated_user.password = Some(String::from_utf8(bytes.to_vec()).unwrap());
+                    }
+                    Some("photo") => {
+                        let mut data = Vec::new();
+                        while let Some(chunk) = field.next().await {
+                            data.extend_from_slice(&chunk.unwrap());
+                        }
+                        updated_user.photo = Some(data);
+                    }
+                    _ => {}
+                }
+            },
+            Err(err) => {
+                error!("Error processing field: {:?}", err);
+                return HttpResponse::BadRequest().finish();
+            }
+        }
+    }
+
+    // Hash password if it's provided in the update
+    if let Some(ref pwd) = updated_user.password {
+        updated_user.password = Some(hash(pwd, DEFAULT_COST).expect("Failed to hash password"));
+    }
+
+    let mut conn: PooledConnection<ConnectionManager<SqliteConnection>> = db.get().expect("Failed to get DB connection");
+
+    // Execute the update in the database with conditional fields
+    let result = web::block(move || {
+        diesel::update(users::table.find(*user_id))
+            .set(&updated_user) // Only non-None fields will be updated
+            .execute(&mut conn)
+    }).await;
+
+    match result {
+        Ok(_) => {
+            info!("User updated successfully.");
+            HttpResponse::Ok().json(json!({"message": "User updated successfully"}))
+        },
+        Err(err) => {
+            error!("Failed to update user: {:?}", err);
+            HttpResponse::InternalServerError().finish()
+        },
+    }
+}

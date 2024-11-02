@@ -6,6 +6,7 @@ pub fn user_routes() -> impl FnOnce(&mut web::ServiceConfig) {
         config.service(web::scope("/users")
             .route("", web::post().to(user_controller::create_user))
             .route("", web::get().to(user_controller::get_users))
+            .route("/{user_id}", web::put().to(user_controller::update_user))
         );
     }
 }
