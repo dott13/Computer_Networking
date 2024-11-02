@@ -164,6 +164,7 @@ pub struct UserResponse {
     pub photo: Option<Vec<u8>>,
 }
 
+//Get users with pagination and filtering
 pub async fn get_users(
     db: web::Data<DbConnection>,
     query: web::Query<UserQueryParams>,
@@ -240,6 +241,43 @@ pub async fn get_users(
     }
 }
 
+// Get a single user by ID
+pub async fn get_user(
+    db: web::Data<DbConnection>,
+    user_id: web::Path<i32>,
+) -> impl Responder {
+    info!("Fetching user with ID: {}", user_id);
+
+    let mut conn: PooledConnection<ConnectionManager<SqliteConnection>> = match db.get() {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Failed to get DB connection: {:?}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let result = web::block(move || {
+        users::table
+            .filter(users::id.eq(*user_id))
+            .select(UserResponse::as_select())
+            .first::<UserResponse>(&mut conn)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(user)) => HttpResponse::Ok().json(user),
+        Ok(Err(diesel::NotFound)) => HttpResponse::NotFound().json(json!({"error": "User not found"})),
+        Ok(Err(e)) => {
+            error!("Database error while fetching users: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+        Err(e) => {
+            error!("Error while processing request: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
 #[derive(Insertable, Deserialize, Debug, AsChangeset)]
 #[diesel(table_name = users)]
 pub struct UpdateUser {
@@ -253,6 +291,7 @@ pub struct UpdateUser {
     pub photo: Option<Vec<u8>>,
 }
 
+//Update a user by his id
 pub async fn update_user(
     user_id: web::Path<i32>,
     mut payload: Multipart,
@@ -343,5 +382,39 @@ pub async fn update_user(
             error!("Failed to update user: {:?}", err);
             HttpResponse::InternalServerError().finish()
         },
+    }
+}
+
+// Delete a user by ID
+pub async fn delete_user(
+    db: web::Data<DbConnection>,
+    user_id: web::Path<i32>,
+) -> impl Responder {
+    info!("Deleting user with ID: {}", user_id);
+
+    let mut conn: PooledConnection<ConnectionManager<SqliteConnection>> = match db.get() {
+        Ok(conn) => conn,
+        Err(e) => {
+            error!("Failed to get DB connection: {:?}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let result = web::block(move || {
+        diesel::delete(users::table.filter(users::id.eq(*user_id)))
+            .execute(&mut conn)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(_)) => HttpResponse::Ok().json(json!({"message": "User deleted successfully"})),
+        Ok(Err(e)) => {
+            error!("Database error while fetching users: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+        Err(e) => {
+            error!("Error while processing request: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
     }
 }
