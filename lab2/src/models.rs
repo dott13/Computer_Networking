@@ -1,4 +1,4 @@
-use diesel::{Queryable, Insertable};
+use diesel::{Queryable, Insertable, Selectable};
 use serde::{Serialize, Deserialize};
 use chrono::NaiveDateTime;
 use crate::schema::{blocks, roles, users, messages};
@@ -17,7 +17,7 @@ pub struct Role {
     pub name: String,
 }
 
-#[derive(Queryable, Insertable, Serialize, Deserialize)]
+#[derive(Queryable, Insertable,Selectable, Serialize, Deserialize, Debug, Clone)]
 #[diesel(table_name = users)]
 pub struct User {
     pub id: i32,

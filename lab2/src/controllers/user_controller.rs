@@ -1,17 +1,20 @@
 use actix_web::{web, HttpResponse, Responder};
 use diesel::prelude::*;
-use crate::models::User;
 use crate::schema::users;
 use crate::db::DbConnection;
 use crate::utils::pagination::PaginatedResponse;
 use bcrypt::{hash, DEFAULT_COST};
+use actix_multipart::Multipart;
+use futures::stream::StreamExt; // For the `next` method
 use serde::{Deserialize, Serialize};
 use diesel::{Queryable, Selectable};
 use serde_json::json;
 use r2d2::PooledConnection;
 use diesel::r2d2::ConnectionManager;
 use log::{info, error};
-#[derive(Deserialize, Debug)]
+
+#[derive(Insertable, Deserialize, Debug)]
+#[diesel(table_name = users)]
 pub struct NewUser {
     pub first_name: String,
     pub last_name: String,
@@ -19,33 +22,103 @@ pub struct NewUser {
     pub role_id: Option<i32>,
     pub apartment: Option<String>,
     pub block_id: Option<i32>,
-    pub photo: Option<Vec<u8>>,
     pub password: String,
+    pub photo: Option<Vec<u8>>,
 }
 
-pub async fn create_user(new_user: web::Json<NewUser>, db: web::Data<DbConnection>) -> impl Responder {
-    info!("Creating user: {:?}", new_user); // Log the new user data
+
+pub async fn create_user(
+    mut payload: Multipart,
+    db: web::Data<DbConnection>,
+) -> impl Responder {
+    let mut new_user = NewUser {
+        first_name: String::new(),
+        last_name: String::new(),
+        username: String::new(),
+        role_id: None,
+        apartment: None,
+        block_id: None,
+        password: String::new(),
+        photo: None,
+    };
+
+    // Parse the multipart form data
+    while let Some(field_result) = payload.next().await {
+        match field_result {
+            Ok(mut field) => {
+                let field_name = field.name();
+                match field_name {
+                    Some("first_name") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        new_user.first_name = String::from_utf8(bytes.to_vec()).unwrap();
+                    }
+                    Some("last_name") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        new_user.last_name = String::from_utf8(bytes.to_vec()).unwrap();
+                    }
+                    Some("username") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        new_user.username = String::from_utf8(bytes.to_vec()).unwrap();
+                    }
+                    Some("role_id") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        new_user.role_id = Some(String::from_utf8(bytes.to_vec()).unwrap().parse().unwrap());
+                    }
+                    Some("apartment") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        new_user.apartment = Some(String::from_utf8(bytes.to_vec()).unwrap());
+                    }
+                    Some("block_id") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        new_user.block_id = Some(String::from_utf8(bytes.to_vec()).unwrap().parse().unwrap());
+                    }
+                    Some("password") => {
+                        let bytes = field.bytes(1024).await.unwrap().unwrap();
+                        new_user.password = String::from_utf8(bytes.to_vec()).unwrap();
+                    }
+                    Some("photo") => {
+                        // Collect the photo data
+                        let mut data = Vec::new();
+                        while let Some(chunk) = field.next().await {
+                            let chunk = chunk.unwrap();
+                            data.extend_from_slice(&chunk);
+                        }
+                        new_user.photo = Some(data);
+                    }
+                    _ => {}
+                }
+            },
+            Err(err) => {
+                error!("Error processing field: {:?}", err);
+                return HttpResponse::BadRequest().finish();
+            }
+        }
+    }
+
+    info!("Creating user: {:?}", new_user);
 
     let mut conn: PooledConnection<ConnectionManager<SqliteConnection>> = db.get().expect("Failed to get DB connection");
-
+    info!("Successfully connected to the database");
+    
+    // Hash the password before insertion
     let hashed_password = hash(&new_user.password, DEFAULT_COST).expect("Failed to hash password");
 
-    let user = User {
-        id: 0, // Use 0 for auto-increment
+    // Create a NewUser instance for insertion
+    let new_user_insert = NewUser {
         first_name: new_user.first_name.clone(),
         last_name: new_user.last_name.clone(),
         username: new_user.username.clone(),
         role_id: new_user.role_id,
         apartment: new_user.apartment.clone(),
         block_id: new_user.block_id,
+        password: hashed_password, // Use the hashed password
         photo: new_user.photo.clone(),
-        password: hashed_password,
     };
 
+    // Insert into the database
     let result = web::block(move || {
-        // Move conn into the closure
         diesel::insert_into(users::table)
-            .values(&user)
+            .values(&new_user_insert) // Use NewUser struct here
             .execute(&mut conn)
     }).await;
 
@@ -60,6 +133,7 @@ pub async fn create_user(new_user: web::Json<NewUser>, db: web::Data<DbConnectio
         },
     }
 }
+
 
 #[derive(Deserialize, Debug)]
 pub struct UserQueryParams {
