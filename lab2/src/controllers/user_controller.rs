@@ -1,9 +1,14 @@
 use actix_web::{web, HttpResponse, Responder};
 use diesel::prelude::*;
+use diesel::result::{Error as DieselError, DatabaseErrorKind};
+use jsonwebtoken::{encode, Header, EncodingKey};
+use std::env;
+use std::time::{SystemTime, UNIX_EPOCH};
 use crate::schema::users;
+use crate::models::User;
 use crate::db::DbConnection;
 use crate::utils::pagination::PaginatedResponse;
-use bcrypt::{hash, DEFAULT_COST};
+use bcrypt::{hash, DEFAULT_COST, verify};
 use actix_multipart::Multipart;
 use futures::stream::StreamExt; // For the `next` method
 use serde::{Deserialize, Serialize};
@@ -25,7 +30,6 @@ pub struct NewUser {
     pub password: String,
     pub photo: Option<Vec<u8>>,
 }
-
 
 pub async fn create_user(
     mut payload: Multipart,
@@ -97,6 +101,7 @@ pub async fn create_user(
 
     info!("Creating user: {:?}", new_user);
 
+    // Get a database connection
     let mut conn: PooledConnection<ConnectionManager<SqliteConnection>> = db.get().expect("Failed to get DB connection");
     info!("Successfully connected to the database");
     
@@ -115,12 +120,10 @@ pub async fn create_user(
         photo: new_user.photo.clone(),
     };
 
-    // Insert into the database
-    let result = web::block(move || {
-        diesel::insert_into(users::table)
-            .values(&new_user_insert) // Use NewUser struct here
-            .execute(&mut conn)
-    }).await;
+    // Insert into the database directly
+    let result = diesel::insert_into(users::table)
+        .values(&new_user_insert) // Use NewUser struct here
+        .execute(&mut conn);
 
     match result {
         Ok(_) => {
@@ -128,12 +131,78 @@ pub async fn create_user(
             HttpResponse::Created().json(json!({"message": "User created successfully"}))
         },
         Err(err) => {
-            error!("Failed to create user: {:?}", err); // Log the error
-            HttpResponse::InternalServerError().finish()
+            match err {
+                DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
+                    error!("Failed to create user: Username already exists.");
+                    HttpResponse::Conflict().json(json!({"error": "Username already exists."}))
+                },
+                _ => {
+                    error!("Failed to create user due to a database error: {:?}", err);
+                    HttpResponse::InternalServerError().finish()
+                },
+            }
         },
     }
 }
 
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Claims {
+    sub: i32,
+    role: i32, 
+    exp: usize,       // Expiration time as UNIX timestamp
+}
+
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+pub async fn login(
+    db: web::Data<DbConnection>,
+    login_data: web::Json<LoginRequest>
+) -> impl Responder {
+    let mut conn = db.get().expect("Failed to get DB connection");
+
+    let result: Result<User, diesel::result::Error> = users::table
+        .filter(users::username.eq(&login_data.username))
+        .first(&mut conn);
+
+    match result {
+        Ok(user) => {
+            // Verify password
+            if verify(&login_data.password, &user.password).unwrap_or(false) {
+                // Generate JWT token
+                let expiration = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs() as usize
+                    + 7 * 24 * 60 * 60; // Token valid for 7 days
+
+                let claims = Claims {
+                    sub: user.id,
+                    role: user.role_id.unwrap_or_default(),
+                    exp: expiration,
+                };
+
+                let secret_key = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+
+                let token = encode(
+                    &Header::default(),
+                    &claims,
+                    &EncodingKey::from_secret(secret_key.as_ref()),
+                )
+                .expect("Failed to encode token");
+                info!("User entered the system successfully. {}", token);
+                HttpResponse::Ok().json(json!({"token": token}))
+            } else {
+                HttpResponse::Unauthorized().json(json!({"error": "Invalid credentials"}))
+            }
+        }
+        Err(_) => HttpResponse::Unauthorized().json(json!({"error": "Invalid credentials"})),
+    }
+}
 
 #[derive(Deserialize, Debug)]
 pub struct UserQueryParams {

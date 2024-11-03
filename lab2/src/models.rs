@@ -27,8 +27,9 @@ pub struct User {
     pub role_id: Option<i32>,  
     pub apartment: Option<String>,  // Use Option for nullable field
     pub block_id: Option<i32>,  // Use Option for nullable foreign key
-    pub photo: Option<Vec<u8>>,  // Use Option for nullable BLOB
     pub password: String,
+    pub photo: Option<Vec<u8>>,  // Use Option for nullable BLOB
+
 }
 
 #[derive(Queryable, Insertable, Serialize, Deserialize)]

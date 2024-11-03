@@ -13,7 +13,7 @@ CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     first_name VARCHAR(50) NOT NULL,
     last_name VARCHAR(50) NOT NULL,
-    username VARCHAR(50) NOT NULL,
+    username VARCHAR(50) NOT NULL UNIQUE,
     role_id INT REFERENCES roles(id) ON DELETE SET NULL,
     apartment VARCHAR(10),
     block_id INT REFERENCES blocks(id) ON DELETE SET NULL,
