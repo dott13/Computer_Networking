@@ -1,9 +1,0 @@
-**/*.env
-/target
-
-**/.git
-**/.DS_Store
-**/node_modules
-**/.idea
-**/.vscode
-**/*.db
