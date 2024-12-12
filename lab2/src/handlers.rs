@@ -1,8 +1,10 @@
 use actix_web::{web, HttpResponse};
+use actix_multipart::Multipart;
 use diesel::prelude::*;
+use futures_util::StreamExt as _;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use actix_web::error::BlockingError;
-use serde::{Deserialize, Serialize};
 use crate::db::DbPool;
 use crate::models::{NewProduct, Product};
 use crate::schema::products::dsl::*;
@@ -17,6 +19,12 @@ pub enum ApiError {
     BlockingError(#[from] BlockingError),
     #[error("Product not found")]
     NotFound,
+    #[error("Multipart error")]
+    MultipartError(#[from] actix_multipart::MultipartError),
+    #[error("UTF-8 conversion error")]
+    Utf8Error(#[from] std::string::FromUtf8Error),
+    #[error("Float parse error")]
+    ParseFloatError(#[from] std::num::ParseFloatError),
 }
 
 impl actix_web::ResponseError for ApiError {
@@ -26,6 +34,9 @@ impl actix_web::ResponseError for ApiError {
             ApiError::PoolError(_) => HttpResponse::InternalServerError().json("Connection pool error"),
             ApiError::BlockingError(_) => HttpResponse::InternalServerError().json("Blocking operation error"),
             ApiError::NotFound => HttpResponse::NotFound().json("Product not found"),
+            ApiError::MultipartError(_) => HttpResponse::BadRequest().json("Multipart error"),
+            ApiError::Utf8Error(_) => HttpResponse::BadRequest().json("Invalid UTF-8 data"),
+            ApiError::ParseFloatError(_) => HttpResponse::BadRequest().json("Invalid float value"),
         }
     }
 }
@@ -46,20 +57,74 @@ pub struct PaginatedResponse<T> {
 
 pub async fn create_product(
     pool: web::Data<DbPool>,
-    new_product: web::Json<NewProduct>,
+    mut payload: Multipart,
 ) -> Result<HttpResponse, ApiError> {
+    let mut product_name: Option<String> = None;
+    let mut product_price: Option<f64> = None;
+    let mut product_description: Option<String> = None;
+    let mut product_image_data: Option<Vec<u8>> = None;
+
+    // Process the multipart payload
+    while let Some(item) = payload.next().await {
+        let mut field = item?;
+        let content_disposition = field.content_disposition().unwrap();
+
+        if let Some(field_name) = content_disposition.get_name() {
+            match field_name {
+                "name" => {
+                    let mut value = Vec::new();
+                    while let Some(chunk) = field.next().await {
+                        value.extend_from_slice(&chunk?);
+                    }
+                    product_name = Some(String::from_utf8(value)?);
+                }
+                "price" => {
+                    let mut value = Vec::new();
+                    while let Some(chunk) = field.next().await {
+                        value.extend_from_slice(&chunk?);
+                    }
+                    product_price = Some(String::from_utf8(value)?.parse()?);
+                }
+                "description" => {
+                    let mut value = Vec::new();
+                    while let Some(chunk) = field.next().await {
+                        value.extend_from_slice(&chunk?);
+                    }
+                    product_description = Some(String::from_utf8(value)?);
+                }
+                "image" => {
+                    let mut image_data = Vec::new();
+                    while let Some(chunk) = field.next().await {
+                        image_data.extend_from_slice(&chunk?);
+                    }
+                    product_image_data = Some(image_data);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Validate required fields
+    let product_name = product_name.ok_or(ApiError::NotFound)?;
+    let product_price = product_price.ok_or(ApiError::NotFound)?;
+
+    // Insert into the database
+    let new_product = NewProduct {
+        name: product_name,
+        price: product_price,
+        description: product_description,
+        image: product_image_data,
+    };
+
     let mut conn = pool.get()?;
     let inserted_product = web::block(move || {
-        // For SQLite, we'll insert and then manually fetch the last inserted product
         diesel::insert_into(products)
-            .values(&new_product.into_inner())
+            .values(&new_product)
             .execute(&mut conn)?;
-        
-        // Fetch the last inserted product
         products.order(id.desc()).first::<Product>(&mut conn)
     })
     .await??;
-    
+
     Ok(HttpResponse::Created().json(inserted_product))
 }
 
