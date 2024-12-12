@@ -1,0 +1,11 @@
+# Ignore local SQLite database
+products.db
+
+# Ignore Diesel configuration if not needed in the container
+diesel.toml
+
+# Ignore build artifacts
+target/
+
+# Ignore Git files
+.git

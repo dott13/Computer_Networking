@@ -8,7 +8,7 @@ use std::{
 
 
 pub fn start_tcp_server(shared_file: Arc<Mutex<String>>) {
-    let listener = TcpListener::bind("127.0.0.1:9000").expect("Failed to bind TCP server");
+    let listener = TcpListener::bind("0.0.0.0:9000").expect("Failed to bind TCP server");
     println!("TCP Server running on 127.0.0.1:9000");
 
     for stream in listener.incoming() {

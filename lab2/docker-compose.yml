@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080" # HTTP API
+      - "8081:8081" # WebSocket
+      - "9000:9000" # TCP Server
+    volumes:
+      - ./migrations:/usr/src/app/migrations
+      - app_data:/usr/src/app/data 
+    environment:
+      - DATABASE_URL=/usr/src/app/data/products.db
+    command: ["sh", "-c", "diesel migration run && ./lab2"]
+
+volumes:
+  app_data:
