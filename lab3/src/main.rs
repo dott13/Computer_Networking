@@ -1,5 +1,4 @@
 mod raft_node;
-mod udp_comms;
 
 use tokio::task;
 use std::sync::Arc;
@@ -11,7 +10,10 @@ async fn main() {
 
     let handles: Vec<_> = nodes.iter()
         .map(|&address| {
-            let peers = nodes.iter().filter(|&&peer| peer != address).map(|&peer| peer.to_string()).collect::<Vec<_>>();
+            let peers = nodes.iter()
+                .filter(|&&peer| peer != address)
+                .map(|&peer| peer.to_string())
+                .collect::<Vec<_>>();
             let node = Arc::new(Mutex::new(raft_node::RaftNode::new(address.to_string(), peers)));
             task::spawn(raft_node::start_node(node))
         })

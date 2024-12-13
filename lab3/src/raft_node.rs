@@ -1,9 +1,10 @@
 use std::net::UdpSocket;
-use tokio::time::{sleep, Duration};
-use serde::{Serialize, Deserialize};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::{Duration, Instant};
+use serde::{Serialize, Deserialize};
 use rand::Rng;
+use tokio::sync::Mutex;
+use tokio::time::sleep;
 
 #[derive(Debug, PartialEq)]
 pub enum NodeState {
@@ -25,6 +26,7 @@ pub struct RaftNode {
     pub state: NodeState,
     pub current_term: u64,
     pub election_timeout: u64,
+    pub last_heartbeat: Instant,
     pub votes_received: usize,
 }
 
@@ -36,66 +38,72 @@ impl RaftNode {
             state: NodeState::Follower,
             current_term: 0,
             election_timeout: rand::thread_rng().gen_range(150..300),
+            last_heartbeat: Instant::now(),
             votes_received: 0,
         }
     }
 
-    pub async fn handle_message(&mut self, msg: Message, socket: &UdpSocket) {
-        match msg {
+    pub fn reset_election_timeout(&mut self) {
+        self.election_timeout = rand::thread_rng().gen_range(150..300);
+        self.last_heartbeat = Instant::now();
+    }
+
+    pub fn send_message(&self, socket: &UdpSocket, message: Message, target: &str) {
+        let serialized = serde_json::to_vec(&message).unwrap();
+        let _ = socket.send_to(&serialized, target);
+        println!(
+            "Node {} sent {:?} to {}",
+            self.address, message, target
+        );
+    }
+
+    pub fn handle_message(&mut self, message: Message, socket: &UdpSocket) {
+        match message {
             Message::RequestVote { term, candidate_id } => {
                 if term > self.current_term {
                     self.current_term = term;
                     self.state = NodeState::Follower;
-                    println!("Node {} voted for {}", self.address, candidate_id);
+                    self.reset_election_timeout();
+                    println!(
+                        "Node {} voted for {} in term {}",
+                        self.address, candidate_id, term
+                    );
                     let response = Message::VoteGranted { term };
-                    let serialized = serde_json::to_vec(&response).unwrap();
-                    let _ = socket.send_to(&serialized, &candidate_id);
+                    self.send_message(socket, response, &candidate_id);
                 }
             }
             Message::AppendEntries { term, leader_id } => {
                 if term >= self.current_term {
                     self.current_term = term;
                     self.state = NodeState::Follower;
-                    println!("Node {} received heartbeat from Leader {}", self.address, leader_id);
                     self.reset_election_timeout();
+                    println!(
+                        "Node {} received heartbeat from Leader {} in term {}",
+                        self.address, leader_id, term
+                    );
                 }
             }
             Message::VoteGranted { term } => {
-                if term == self.current_term && self.state == NodeState::Candidate {
+                if self.state == NodeState::Candidate && term == self.current_term {
                     self.votes_received += 1;
-                    println!("Node {} received a vote, total votes: {}", self.address, self.votes_received);
+                    println!(
+                        "Node {} received a vote in term {}, total votes: {}",
+                        self.address, term, self.votes_received
+                    );
                     if self.votes_received > self.peers.len() / 2 {
                         self.state = NodeState::Leader;
-                        println!("Node {} became Leader", self.address);
+                        println!("Node {} became Leader for term {}", self.address, self.current_term);
                     }
                 }
             }
         }
     }
-
-    pub async fn send_heartbeat(&self, socket: &UdpSocket) {
-        if self.state == NodeState::Leader {
-            let message = Message::AppendEntries {
-                term: self.current_term,
-                leader_id: self.address.clone(),
-            };
-            let serialized = serde_json::to_vec(&message).unwrap();
-            for peer in &self.peers {
-                let _ = socket.send_to(&serialized, peer);
-            }
-            println!("Leader {} sent heartbeats", self.address);
-        }
-    }
-
-    pub fn reset_election_timeout(&mut self) {
-        self.election_timeout = rand::thread_rng().gen_range(150..300);
-    }
 }
 
 pub async fn start_node(node: Arc<Mutex<RaftNode>>) {
     let address = node.lock().await.address.clone();
-    let socket = UdpSocket::bind(&address).unwrap();
-    socket.set_nonblocking(true).unwrap();
+    let socket = UdpSocket::bind(&address).expect("Failed to bind socket");
+    socket.set_nonblocking(true).expect("Failed to set non-blocking");
 
     let mut buffer = [0; 1024];
 
@@ -103,36 +111,51 @@ pub async fn start_node(node: Arc<Mutex<RaftNode>>) {
         {
             let mut node = node.lock().await;
 
-            if node.state == NodeState::Follower || node.state == NodeState::Candidate {
-                sleep(Duration::from_millis(node.election_timeout as u64)).await;
+            // Timeout handling for elections
+            if node.last_heartbeat.elapsed() > Duration::from_millis(node.election_timeout as u64) {
                 if node.state != NodeState::Leader {
                     node.state = NodeState::Candidate;
                     node.current_term += 1;
                     node.votes_received = 1; // Vote for itself
-                    println!("Node {} became Candidate for term {}", node.address, node.current_term);
+                    println!(
+                        "Node {} started election for term {}",
+                        node.address, node.current_term
+                    );
 
                     let request = Message::RequestVote {
                         term: node.current_term,
                         candidate_id: node.address.clone(),
                     };
 
-                    let serialized = serde_json::to_vec(&request).unwrap();
                     for peer in &node.peers {
-                        let _ = socket.send_to(&serialized, peer);
+                        node.send_message(&socket, request.clone(), peer);
                     }
+                    node.reset_election_timeout();
                 }
             }
 
+            // Leader sends heartbeats
             if node.state == NodeState::Leader {
-                node.send_heartbeat(&socket).await;
+                let heartbeat = Message::AppendEntries {
+                    term: node.current_term,
+                    leader_id: node.address.clone(),
+                };
+                for peer in &node.peers {
+                    node.send_message(&socket, heartbeat.clone(), peer);
+                }
+                println!("Leader {} sent heartbeats", node.address);
                 sleep(Duration::from_millis(100)).await; // Heartbeat interval
             }
         }
 
-        if let Ok((size, _)) = socket.recv_from(&mut buffer) {
+        // Receive and handle incoming messages
+        if let Ok((size, src)) = socket.recv_from(&mut buffer) {
             let message: Message = serde_json::from_slice(&buffer[..size]).unwrap();
+            println!("Node {} received {:?} from {}", node.lock().await.address, message, src);
             let mut node = node.lock().await;
-            node.handle_message(message, &socket).await;
+            node.handle_message(message, &socket);
         }
+
+        std::thread::sleep(Duration::from_millis(10)); // Avoid busy looping
     }
 }
